@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kube Invaders - Space Invaders Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #160f31 0%, #252348 100%);
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .game-container {
+            text-align: center;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #5130c4;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(81, 48, 196, 0.5);
+            font-size: 2.5em;
+        }
+
+        .game-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+            color: #cfc8fd;
+        }
+
+        .score, .lives {
+            background: rgba(81, 48, 196, 0.2);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 2px solid #5130c4;
+        }
+
+        canvas {
+            background: #160f31;
+            border: 3px solid #5130c4;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(81, 48, 196, 0.5);
+            display: block;
+        }
+
+        .controls {
+            margin-top: 20px;
+            color: #cfc8fd;
+            font-size: 0.9em;
+        }
+
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(22, 15, 49, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 3px solid #5130c4;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 0 50px rgba(81, 48, 196, 0.8);
+        }
+
+        .game-over h2 {
+            color: #f1acfc;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+
+        .game-over button {
+            background: #5130c4;
+            color: #ffffff;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+
+        .game-over button:hover {
+            background: #cfc8fd;
+            color: #160f31;
+            transform: scale(1.05);
+        }
+
+        .pause-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(22, 15, 49, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 3px solid #5130c4;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 0 50px rgba(81, 48, 196, 0.8);
+        }
+
+        .pause-overlay h2 {
+            color: #cfc8fd;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>KUBE INVADERS</h1>
+        <div class="game-info">
+            <div class="score">Score: <span id="score">0</span></div>
+            <div class="lives">Lives: <span id="lives">3</span></div>
+        </div>
+        <canvas id="gameCanvas" width="1200" height="720"></canvas>
+        <div class="controls">
+            Use ← → arrow keys or A/D to move, SPACE to shoot, ESC to pause/unpause
+        </div>
+    </div>
+
+    <div class="game-over" id="gameOver">
+        <h2 id="gameOverText">Game Over</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <p id="countdown" style="font-size: 1.5em; color: #cfc8fd; margin: 20px 0;">Restarting in <span id="countdownNumber">10</span> seconds...</p>
+        <button onclick="restartGame()">Play Again Now</button>
+    </div>
+
+    <div class="pause-overlay" id="pauseOverlay">
+        <h2>PAUSED</h2>
+        <p style="color: #cfc8fd; font-size: 1.2em;">Press ESC to resume</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Testkube color palette
+        const colors = {
+            primaryPurple: '#5130c4',
+            darkPurple: '#160f31',
+            lightPurple: '#cfc8fd',
+            pink: '#f1acfc',
+            yellow: '#ffdb5b',
+            green: '#69b353',
+            white: '#ffffff'
+        };
+
+        // Game state
+        let gameState = {
+            score: 0,
+            lives: 3,
+            gameRunning: true,
+            paused: false
+        };
+
+        // Countdown timer
+        let countdownTimer = null;
+        let countdownSeconds = 10;
+
+        // Start countdown for auto-restart
+        function startCountdown() {
+            countdownSeconds = 10;
+            document.getElementById('countdownNumber').textContent = countdownSeconds;
+            
+            // Clear any existing timer
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+            }
+            
+            // Start countdown
+            countdownTimer = setInterval(() => {
+                countdownSeconds--;
+                document.getElementById('countdownNumber').textContent = countdownSeconds;
+                
+                if (countdownSeconds <= 0) {
+                    clearInterval(countdownTimer);
+                    restartGame();
+                }
+            }, 1000);
+        }
+
+        // Player
+        const player = {
+            x: canvas.width / 2 - 37.5,
+            y: canvas.height - 72,
+            width: 75,
+            height: 45,
+            speed: 7.5,
+            color: colors.primaryPurple
+        };
+
+        // Bullets
+        let bullets = [];
+        const bulletSpeed = 10.5;
+
+        // Enemies
+        let enemies = [];
+        const enemyRows = 5;
+        const enemyCols = 10;
+        const enemyWidth = 70;
+        const enemyHeight = 52.5;
+        const enemyPadding = 15;
+        let enemyDirection = 1;
+        let enemySpeed = 2.5; // Increased base speed
+        let enemyDropDistance = 30;
+        let directionChangeInterval = 3000; // Random direction change every 1.5-4 seconds
+        let nextDirectionChange = Date.now() + directionChangeInterval;
+        
+        // Load enemy image
+        const enemyImage = new Image();
+        enemyImage.src = 'purple-kubie.png';
+        
+        // Load player image (using purple-kubie for spaceship)
+        const playerImage = new Image();
+        playerImage.src = 'purple-kubie.png';
+
+        // Initialize enemies
+        function initEnemies() {
+            enemies = [];
+            const startX = (canvas.width - (enemyCols * (enemyWidth + enemyPadding) - enemyPadding)) / 2;
+            const startY = 60;
+
+            for (let row = 0; row < enemyRows; row++) {
+                for (let col = 0; col < enemyCols; col++) {
+                    enemies.push({
+                        x: startX + col * (enemyWidth + enemyPadding),
+                        y: startY + row * (enemyHeight + enemyPadding),
+                        width: enemyWidth,
+                        height: enemyHeight
+                    });
+                }
+            }
+        }
+
+        // Draw player
+        function drawPlayer() {
+            if (playerImage.complete) {
+                ctx.drawImage(playerImage, player.x, player.y, player.width, player.height);
+            } else {
+                // Fallback if image hasn't loaded yet
+                ctx.fillStyle = player.color;
+                ctx.beginPath();
+                ctx.moveTo(player.x + player.width / 2, player.y);
+                ctx.lineTo(player.x, player.y + player.height);
+                ctx.lineTo(player.x + player.width / 4, player.y + player.height * 0.7);
+                ctx.lineTo(player.x + player.width * 3/4, player.y + player.height * 0.7);
+                ctx.lineTo(player.x + player.width, player.y + player.height);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        // Draw bullets
+        function drawBullets() {
+            ctx.fillStyle = colors.green;
+            bullets.forEach(bullet => {
+                ctx.fillRect(bullet.x, bullet.y, 6, 15);
+            });
+        }
+
+        // Draw enemies
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                if (enemyImage.complete) {
+                    ctx.drawImage(enemyImage, enemy.x, enemy.y, enemy.width, enemy.height);
+                } else {
+                    // Fallback if image hasn't loaded yet
+                    ctx.fillStyle = colors.primaryPurple;
+                    ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                }
+            });
+        }
+
+        // Update bullets
+        function updateBullets() {
+            bullets = bullets.filter(bullet => {
+                bullet.y -= bulletSpeed;
+                return bullet.y > 0;
+            });
+        }
+
+        // Update enemies
+        function updateEnemies() {
+            const now = Date.now();
+            let edgeReached = false;
+            
+            // Find the lowest enemy to check distance from player
+            let lowestEnemyY = 0;
+            enemies.forEach(enemy => {
+                if (enemy.y > lowestEnemyY) {
+                    lowestEnemyY = enemy.y;
+                }
+            });
+            const distanceFromPlayer = player.y - (lowestEnemyY + enemyHeight);
+            
+            // Random direction change at unpredictable intervals
+            if (now >= nextDirectionChange) {
+                // Only allow random direction change if enemies are not too close to player
+                // 20% chance to change direction randomly (reduced from 30%)
+                if (Math.random() < 0.2 && distanceFromPlayer > 150) {
+                    enemyDirection *= -1;
+                    // Rarely drop down when changing direction (reduced from 40% to 15%)
+                    if (Math.random() < 0.15 && distanceFromPlayer > 200) {
+                        const smallDrop = enemyDropDistance * (0.3 + Math.random() * 0.2); // Smaller drop
+                        enemies.forEach(enemy => {
+                            enemy.y += smallDrop;
+                        });
+                    }
+                }
+                // Set next random direction change (2-5 seconds, longer intervals)
+                directionChangeInterval = 2000 + Math.random() * 3000;
+                nextDirectionChange = now + directionChangeInterval;
+            }
+
+            // Add random speed variation (0.85x to 1.2x, reduced range)
+            const speedMultiplier = 0.85 + Math.random() * 0.35;
+            const currentSpeed = enemySpeed * speedMultiplier;
+
+            enemies.forEach(enemy => {
+                // Add slight random variation to each enemy's movement (reduced variation)
+                const individualVariation = 0.95 + Math.random() * 0.1;
+                enemy.x += currentSpeed * enemyDirection * individualVariation;
+                
+                if (enemy.x <= 0 || enemy.x + enemy.width >= canvas.width) {
+                    edgeReached = true;
+                }
+            });
+
+            if (edgeReached) {
+                enemyDirection *= -1;
+                // Random drop distance when hitting edge (reduced range)
+                const dropAmount = enemyDropDistance * (0.8 + Math.random() * 0.4);
+                // Safety check: don't drop if too close to player
+                if (distanceFromPlayer > 100) {
+                    enemies.forEach(enemy => {
+                        enemy.y += dropAmount;
+                    });
+                }
+                // Reset random direction change timer after edge hit
+                directionChangeInterval = 2000 + Math.random() * 3000;
+                nextDirectionChange = now + directionChangeInterval;
+            }
+
+            // Check if enemies reached bottom
+            enemies.forEach(enemy => {
+                if (enemy.y + enemy.height >= player.y) {
+                    gameOver();
+                }
+            });
+        }
+
+        // Collision detection
+        function checkCollisions() {
+            // Bullet-enemy collisions
+            bullets.forEach((bullet, bulletIndex) => {
+                enemies.forEach((enemy, enemyIndex) => {
+                    if (bullet.x < enemy.x + enemy.width &&
+                        bullet.x + 6 > enemy.x &&
+                        bullet.y < enemy.y + enemy.height &&
+                        bullet.y + 15 > enemy.y) {
+                        // Collision!
+                        bullets.splice(bulletIndex, 1);
+                        enemies.splice(enemyIndex, 1);
+                        gameState.score += 10;
+                        document.getElementById('score').textContent = gameState.score;
+                        
+                        // Increase speed as enemies are destroyed
+                        if (enemies.length > 0) {
+                            enemySpeed = 2.5 + (enemyRows * enemyCols - enemies.length) * 0.025;
+                        }
+                    }
+                });
+            });
+
+            // Check win condition
+            if (enemies.length === 0) {
+                gameState.gameRunning = false;
+                document.getElementById('gameOverText').textContent = 'You Win!';
+                document.getElementById('finalScore').textContent = gameState.score;
+                document.getElementById('gameOver').style.display = 'block';
+                startCountdown();
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            if (!gameState.gameRunning) return;
+
+            // Clear canvas
+            ctx.fillStyle = colors.darkPurple;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw stars background
+            ctx.fillStyle = colors.lightPurple;
+            for (let i = 0; i < 75; i++) {
+                const x = (i * 55.5) % canvas.width;
+                const y = (i * 79.5 + Date.now() * 0.01) % canvas.height;
+                ctx.fillRect(x, y, 3, 3);
+            }
+
+            // Only update game logic if not paused
+            if (!gameState.paused) {
+                updateBullets();
+                updateEnemies();
+                checkCollisions();
+            }
+            
+            // Always draw (so game is visible when paused)
+            drawEnemies();
+            drawBullets();
+            drawPlayer();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Keyboard controls
+        const keys = {};
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            // Pause/unpause with Escape
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                togglePause();
+            }
+            
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                if (!gameState.paused) {
+                    shoot();
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Player movement
+        function handlePlayerMovement() {
+            if (gameState.paused) return; // Don't move when paused
+            
+            if ((keys['ArrowLeft'] || keys['a'] || keys['A']) && player.x > 0) {
+                player.x -= player.speed;
+            }
+            if ((keys['ArrowRight'] || keys['d'] || keys['D']) && player.x < canvas.width - player.width) {
+                player.x += player.speed;
+            }
+        }
+
+        // Shooting
+        function shoot() {
+            if (gameState.gameRunning && !gameState.paused) {
+                bullets.push({
+                    x: player.x + player.width / 2 - 3,
+                    y: player.y
+                });
+            }
+        }
+
+        // Toggle pause
+        function togglePause() {
+            if (!gameState.gameRunning) return; // Can't pause when game is over
+            
+            gameState.paused = !gameState.paused;
+            const pauseOverlay = document.getElementById('pauseOverlay');
+            
+            if (gameState.paused) {
+                pauseOverlay.style.display = 'block';
+            } else {
+                pauseOverlay.style.display = 'none';
+            }
+        }
+
+        // Game over
+        function gameOver() {
+            gameState.gameRunning = false;
+            document.getElementById('finalScore').textContent = gameState.score;
+            document.getElementById('gameOver').style.display = 'block';
+            startCountdown();
+        }
+
+        // Restart game
+        function restartGame() {
+            // Clear countdown timer if it exists
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            
+            gameState.score = 0;
+            gameState.lives = 3;
+            gameState.gameRunning = true;
+            gameState.paused = false; // Reset pause state
+            bullets = [];
+            player.x = canvas.width / 2 - 37.5;
+            document.getElementById('score').textContent = 0;
+            document.getElementById('lives').textContent = 3;
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('gameOverText').textContent = 'Game Over';
+            document.getElementById('pauseOverlay').style.display = 'none'; // Hide pause overlay
+            initEnemies();
+            enemySpeed = 2.5;
+            nextDirectionChange = Date.now() + directionChangeInterval;
+            gameLoop();
+        }
+
+        // Movement loop
+        setInterval(handlePlayerMovement, 16);
+
+        // Track loaded images
+        let imagesLoaded = 0;
+        const totalImages = 2;
+        let gameStarted = false;
+        
+        function checkAllImagesLoaded() {
+            if (gameStarted) return; // Prevent multiple starts
+            imagesLoaded++;
+            if (imagesLoaded >= totalImages) {
+                gameStarted = true;
+                initEnemies();
+                gameLoop();
+            }
+        }
+        
+        // Start game after images load
+        enemyImage.onload = checkAllImagesLoaded;
+        enemyImage.onerror = function() {
+            console.warn('Could not load enemy image, using fallback');
+            checkAllImagesLoaded();
+        };
+        
+        playerImage.onload = checkAllImagesLoaded;
+        playerImage.onerror = function() {
+            console.warn('Could not load player image, using fallback');
+            checkAllImagesLoaded();
+        };
+        
+        // If images are already loaded (cached), start immediately
+        if (enemyImage.complete) checkAllImagesLoaded();
+        if (playerImage.complete) checkAllImagesLoaded();
+    </script>
+</body>
+</html>
