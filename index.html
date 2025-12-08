@@ -25,13 +25,14 @@
         .game-container {
             text-align: center;
             padding: 20px;
+            position: relative;
         }
 
         h1 {
             color: #5130c4;
             margin-bottom: 10px;
             text-shadow: 0 0 10px rgba(81, 48, 196, 0.5);
-            font-size: 2.5em;
+            font-size: 4.5em;
         }
 
         .game-info {
@@ -42,7 +43,7 @@
             color: #cfc8fd;
         }
 
-        .score, .lives {
+        .score, .lives, .level {
             background: rgba(81, 48, 196, 0.2);
             padding: 10px 20px;
             border-radius: 10px;
@@ -122,6 +123,12 @@
             margin-bottom: 20px;
             font-size: 2em;
         }
+
+        #piercingIndicator {
+            color: #ffdb5b;
+            text-shadow: 0 0 20px rgba(255, 219, 91, 1), 0 0 40px rgba(255, 219, 91, 0.8), 0 0 60px rgba(255, 219, 91, 0.6);
+            transition: all 0.3s;
+        }
     </style>
 </head>
 <body>
@@ -129,11 +136,15 @@
         <h1>KUBE INVADERS</h1>
         <div class="game-info">
             <div class="score">Score: <span id="score">0</span></div>
-            <div class="lives">Lives: <span id="lives">3</span></div>
+            <div class="level">Level: <span id="level">1</span></div>
+            <div class="lives">Lives: <span id="lives">1</span></div>
         </div>
         <canvas id="gameCanvas" width="1200" height="720"></canvas>
         <div class="controls">
             Use ← → arrow keys or A/D to move, SPACE to shoot, ESC to pause/unpause
+        </div>
+        <div id="piercingIndicator" style="visibility: hidden; margin-top: 10px; font-size: 1.5em; font-weight: bold; min-height: 1.5em;">
+            <span id="piercingMessage">Piercing bullets active for</span> <span id="piercingTime">0</span> <span id="piercingUnit">seconds</span>
         </div>
     </div>
 
@@ -167,9 +178,26 @@
         // Game state
         let gameState = {
             score: 0,
-            lives: 3,
+            lives: 1, // Start with 1 life
+            level: 1,
             gameRunning: true,
-            paused: false
+            paused: false,
+            inLevelTransition: false,
+            losingLife: false, // Animation state for losing a life
+            lifeLossAnimationTime: 0,
+            lifeLossAnimationDuration: 60, // frames for animation
+            inCountdown: false, // Countdown state after enemies are released
+            countdownNumber: 3, // Current countdown number (3, 2, 1)
+            countdownTimer: 0, // Frame counter for countdown
+            showGo: false, // Show "Go!" message
+            showingLevelComplete: false, // Show level completion message
+            levelCompleteTimer: 0, // Timer for level complete message
+            levelCompleteDuration: 120, // Duration to show message (2 seconds at 60fps)
+            showingCheatMessage: false, // Show cheat code activated message
+            cheatMessageTimer: 0, // Timer for cheat message
+            cheatMessageDuration: 120, // Duration to show message (2 seconds at 60fps)
+            showingVictory: false, // Show victory screen
+            victoryTimer: 0 // Timer for victory screen animation
         };
 
         // Countdown timer
@@ -199,18 +227,25 @@
         }
 
         // Player
+        const basePlayerSpeed = 7.5;
+        const playerSpeedIncreasePerRedKubie = 0.2; // Speed increase per red kubie killed
         const player = {
             x: canvas.width / 2 - 37.5,
             y: canvas.height - 72,
             width: 75,
             height: 45,
-            speed: 7.5,
+            speed: basePlayerSpeed,
             color: colors.primaryPurple
         };
 
         // Bullets
         let bullets = [];
         const bulletSpeed = 10.5;
+        
+        // Fire bombs (from level 5+)
+        let fireBombs = [];
+        const fireBombSpeed = 2.5; // Slow falling speed
+        const fireBombSize = 30; // Size of fire bomb
 
         // Enemies
         let enemies = [];
@@ -220,72 +255,558 @@
         const enemyHeight = 52.5;
         const enemyPadding = 15;
         let enemyDirection = 1;
-        let enemySpeed = 2.5; // Increased base speed
+        const baseSpeedLevel1 = 2.0; // Initial speed for level 1
+        const maxSpeed = 2.5; // Maximum speed (reached at level 10)
+        const speedPerRedKubie = 0.2; // Speed reduction per red kubie
+        let redKubiesKilled = 0; // Track how many red kubies have been killed in current level
+        let totalRedKubiesInLevel = 0; // Total red kubies in current level
+        let piercingBulletsActive = false; // Whether bullets pierce through enemies
+        let piercingTimeRemaining = 0; // Time remaining for piercing bullets (in seconds)
+        let piercingTimeActive = 0; // Total time piercing has been active (in seconds)
+        const piercingDurationPerRedKubie = 5; // Seconds of piercing per red kubie killed
+        const superPiercingThreshold = 5; // Seconds before bullets become super-piercing
+        let lastFrameTime = Date.now(); // Track time for piercing timer
+        let enemySpeed = baseSpeedLevel1;
         let enemyDropDistance = 30;
-        let directionChangeInterval = 3000; // Random direction change every 1.5-4 seconds
-        let nextDirectionChange = Date.now() + directionChangeInterval;
         
-        // Load enemy image
+        // Boss fight variables (level 15)
+        const bossHitsRequired = 80; // Boss needs 80 hits to die
+        const bossHalfHealth = 40; // Boss starts timer-based bombs at half health
+        const bossSizeMultiplier = 3; // Boss is 3x the size of normal enemies
+        let bossSpeed = baseSpeedLevel1; // Boss movement speed (starts at base speed)
+        const bossSpeedIncreasePerDrop = 0.15; // Speed increase each time boss moves down
+        let bossFireBombTimer = 0; // Timer for boss fire bomb drops (in frames)
+        const bossFireBombBaseInterval = 120; // Base interval: 2 seconds at 60fps
+        const bossFireBombIntervalReduction = 15; // 0.25 seconds reduction per 10 hits (15 frames at 60fps)
+        
+        // Level transition animation
+        let transitionKubie = {
+            x: 0,
+            y: -200, // Start above canvas
+            width: 150,
+            height: 90,
+            speed: 3,
+            targetY: 25, // Target position just below top border
+            releasing: false,
+            releaseProgress: 0,
+            enemyReleaseIndex: 0, // Track which enemy to release next
+            enemyReleaseTimer: 0
+        };
+        
+        // Store enemy target positions during transition
+        let enemyTargetPositions = [];
+        
+        // Calculate base speed for a given level
+        function getBaseSpeedForLevel(level) {
+            if (level < 5) {
+                return baseSpeedLevel1; // 2.0 for levels 1-4
+            } else if (level < 10) {
+                // Levels 5-9: increase by 0.1 per level (2.1, 2.2, 2.3, 2.4, 2.5)
+                return baseSpeedLevel1 + (level - 4) * 0.1;
+            } else {
+                return maxSpeed; // 2.5 for level 10+
+            }
+        }
+        
+        // Load enemy images
         const enemyImage = new Image();
-        enemyImage.src = 'purple-kubie.png';
+        enemyImage.src = 'kubies/purple-kubie.png';
+        
+        // Load red kubie images for special enemies (excluding kubie-on-fire which is only for falling bombs)
+        const redKubieImages = [
+            new Image(),
+            new Image(),
+            new Image(),
+            new Image()
+        ];
+        redKubieImages[0].src = 'kubies/kubie-angry.png';
+        redKubieImages[1].src = 'kubies/kubie-glowing-eyes.png';
+        redKubieImages[2].src = 'kubies/kubie-error.png';
+        redKubieImages[3].src = 'kubies/kubie-with-knife.png';
         
         // Load player image (using purple-kubie for spaceship)
         const playerImage = new Image();
-        playerImage.src = 'purple-kubie.png';
+        playerImage.src = 'kubies/purple-kubie.png';
+        
+        // Load fire bomb image
+        const fireBombImage = new Image();
+        fireBombImage.src = 'kubies/kubie-on-fire.png';
 
         // Initialize enemies
-        function initEnemies() {
+        function initEnemies(startTransition = true) {
             enemies = [];
+            
+            // Level 15: Boss fight
+            if (gameState.level === 15) {
+                const bossWidth = enemyWidth * bossSizeMultiplier;
+                const bossHeight = enemyHeight * bossSizeMultiplier;
+                const bossX = canvas.width / 2 - bossWidth / 2;
+                const bossY = 100; // Position boss near top
+                
+                enemies.push({
+                    x: bossX, // Will be moved to transition kubie position initially
+                    y: bossY, // Will be moved to transition kubie position initially
+                    width: bossWidth,
+                    height: bossHeight,
+                    isSpecial: true, // Boss is a red enemy
+                    isBoss: true, // Mark as boss
+                    hits: 0,
+                    redKubieIndex: Math.floor(Math.random() * redKubieImages.length),
+                    shakeX: 0,
+                    shakeY: 0,
+                    shakeIntensity: 0,
+                    targetX: bossX, // Target position after transition
+                    targetY: bossY,
+                    transitionSpeed: 0.15 + Math.random() * 0.1,
+                    inTransition: startTransition,
+                    released: !startTransition // Boss follows transition logic
+                });
+                
+                totalRedKubiesInLevel = 1;
+                redKubiesKilled = 0;
+                bossSpeed = baseSpeedLevel1; // Reset boss speed
+                bossFireBombTimer = 0; // Reset boss fire bomb timer
+                piercingBulletsActive = false;
+                piercingTimeRemaining = 0;
+                piercingTimeActive = 0;
+                updatePiercingIndicator();
+                enemySpeed = bossSpeed; // Boss uses its own speed
+                
+                // Start transition if requested (boss emerges from large kubie)
+                if (startTransition) {
+                    startLevelTransition();
+                }
+                return;
+            }
+            
+            // Normal level initialization
             const startX = (canvas.width - (enemyCols * (enemyWidth + enemyPadding) - enemyPadding)) / 2;
             const startY = 60;
 
+            // Create all enemies as regular purple kubies first
             for (let row = 0; row < enemyRows; row++) {
                 for (let col = 0; col < enemyCols; col++) {
+                    const targetX = startX + col * (enemyWidth + enemyPadding);
+                    const targetY = startY + row * (enemyHeight + enemyPadding);
+                    
                     enemies.push({
-                        x: startX + col * (enemyWidth + enemyPadding),
-                        y: startY + row * (enemyHeight + enemyPadding),
+                        x: targetX, // Start at target position (will be moved to transition kubie when it arrives)
+                        y: targetY, // Start at target position (will be moved to transition kubie when it arrives)
                         width: enemyWidth,
-                        height: enemyHeight
+                        height: enemyHeight,
+                        isSpecial: false,
+                        hits: 0,
+                        redKubieIndex: 0,
+                        row: row, // Store row index for filtering
+                        targetX: targetX, // Store target position for transition
+                        targetY: targetY,
+                        transitionSpeed: 0.15 + Math.random() * 0.1, // Random speed for release animation
+                        inTransition: startTransition, // Track if this enemy is in transition
+                        released: !startTransition // If no transition, enemies are immediately "released"
                     });
                 }
+            }
+            
+            // Level 1 has no red kubies, each level adds one more
+            const redKubieCount = gameState.level - 1;
+            
+            if (redKubieCount > 0) {
+                // Filter out bottom row enemies if level < 10
+                let availableEnemies = enemies;
+                if (gameState.level < 10) {
+                    availableEnemies = enemies.filter(enemy => enemy.row < enemyRows - 1);
+                }
+                
+                // Randomly select enemies to be special red kubies
+                const selectedIndices = [];
+                const maxRedKubies = Math.min(redKubieCount, availableEnemies.length);
+                totalRedKubiesInLevel = maxRedKubies;
+                
+                while (selectedIndices.length < maxRedKubies) {
+                    const randomIndex = Math.floor(Math.random() * availableEnemies.length);
+                    if (!selectedIndices.includes(randomIndex)) {
+                        selectedIndices.push(randomIndex);
+                        const enemy = availableEnemies[randomIndex];
+                        // Find the original enemy in the enemies array
+                        const originalIndex = enemies.findIndex(e => 
+                            e.x === enemy.x && e.y === enemy.y
+                        );
+                        if (originalIndex !== -1) {
+                            enemies[originalIndex].isSpecial = true;
+                            enemies[originalIndex].hits = 0;
+                            enemies[originalIndex].redKubieIndex = Math.floor(Math.random() * redKubieImages.length);
+                            enemies[originalIndex].shakeX = 0;
+                            enemies[originalIndex].shakeY = 0;
+                            enemies[originalIndex].shakeIntensity = 0;
+                        }
+                    }
+                }
+            } else {
+                totalRedKubiesInLevel = 0;
+            }
+            
+            // Reset red kubies killed counter and piercing bullets for this level
+            redKubiesKilled = 0;
+            piercingBulletsActive = false;
+            piercingTimeRemaining = 0;
+            piercingTimeActive = 0;
+            updatePiercingIndicator();
+            
+            // Calculate initial speed based on level
+            // Base speed increases from level 5-10, then stays at 2.5
+            const baseSpeedForLevel = getBaseSpeedForLevel(gameState.level);
+            
+            // Then reduce speed based on actual number of red kubies (more red kubies = slower start)
+            enemySpeed = baseSpeedForLevel - (totalRedKubiesInLevel * speedPerRedKubie);
+            // Ensure speed doesn't go below a minimum
+            if (enemySpeed < 1.0) {
+                enemySpeed = 1.0;
+            }
+            
+            // Start transition if requested
+            if (startTransition) {
+                startLevelTransition();
+            }
+        }
+        
+        // Start level transition animation
+        function startLevelTransition() {
+            gameState.inLevelTransition = true;
+            transitionKubie.y = -200;
+            transitionKubie.x = canvas.width / 2 - transitionKubie.width / 2;
+            transitionKubie.releasing = false;
+            transitionKubie.releaseProgress = 0;
+            transitionKubie.enemyReleaseIndex = 0;
+            transitionKubie.enemyReleaseTimer = 0;
+            
+            // Initialize all enemies at the transition kubie's position (hidden until released)
+            const kubieCenterX = transitionKubie.x + transitionKubie.width / 2;
+            const kubieCenterY = transitionKubie.targetY + transitionKubie.height / 2;
+            
+            enemies.forEach(enemy => {
+                enemy.x = kubieCenterX - enemy.width / 2;
+                enemy.y = kubieCenterY - enemy.height / 2;
+                enemy.released = false; // Track if this enemy has been released
+            });
+        }
+        
+        // Update level transition animation
+        function updateLevelTransition() {
+            if (!gameState.inLevelTransition) return;
+            
+            const kubieCenterX = transitionKubie.x + transitionKubie.width / 2;
+            const kubieCenterY = transitionKubie.targetY + transitionKubie.height / 2;
+            
+            // Phase 1: Large kubie descends to top
+            if (!transitionKubie.releasing) {
+                transitionKubie.y += transitionKubie.speed;
+                
+                // When it reaches target position, stop and start releasing enemies
+                if (transitionKubie.y >= transitionKubie.targetY) {
+                    transitionKubie.y = transitionKubie.targetY; // Stop at top
+                    transitionKubie.releasing = true;
+                    transitionKubie.releaseProgress = 0;
+                }
+            } else {
+                // Phase 2: Release enemies one by one in a stream
+                transitionKubie.enemyReleaseTimer++;
+                
+                // Release enemies at intervals (every 6 frames for slower stream)
+                if (transitionKubie.enemyReleaseTimer >= 6 && transitionKubie.enemyReleaseIndex < enemies.length) {
+                    // Release next enemy (or small group)
+                    const enemiesToRelease = Math.min(1, enemies.length - transitionKubie.enemyReleaseIndex);
+                    for (let i = 0; i < enemiesToRelease; i++) {
+                        if (transitionKubie.enemyReleaseIndex < enemies.length) {
+                            enemies[transitionKubie.enemyReleaseIndex].released = true;
+                            transitionKubie.enemyReleaseIndex++;
+                        }
+                    }
+                    transitionKubie.enemyReleaseTimer = 0;
+                }
+                
+                // Phase 3: Move released enemies down and toward their target positions
+                let allEnemiesInPlace = true;
+                
+                enemies.forEach(enemy => {
+                    if (!enemy.released) {
+                        // Keep unreleased enemies at kubie position
+                        enemy.x = kubieCenterX - enemy.width / 2;
+                        enemy.y = kubieCenterY - enemy.height / 2;
+                        allEnemiesInPlace = false;
+                    } else {
+                        // Move released enemies: descend and spread to target
+                        const dx = enemy.targetX - enemy.x;
+                        const dy = enemy.targetY - enemy.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance > 1) {
+                            allEnemiesInPlace = false;
+                            // Move enemy towards target position (both horizontally and vertically)
+                            // Slower movement for more visible stream effect
+                            const moveSpeed = enemy.transitionSpeed * 0.5;
+                            enemy.x += dx * moveSpeed;
+                            enemy.y += dy * moveSpeed;
+                            
+                            // Add slight downward momentum for stream effect (slower)
+                            if (enemy.y < enemy.targetY) {
+                                enemy.y += 0.8;
+                            }
+                        } else {
+                            // Snap to final position
+                            enemy.x = enemy.targetX;
+                            enemy.y = enemy.targetY;
+                        }
+                    }
+                });
+                
+                // When all enemies are released and in place, end transition
+                if (allEnemiesInPlace && transitionKubie.enemyReleaseIndex >= enemies.length) {
+                    // Move large kubie back up and out
+                    transitionKubie.y -= transitionKubie.speed * 1.5;
+                    
+                    // When it's off screen, start countdown
+                    if (transitionKubie.y < -transitionKubie.height) {
+                        gameState.inLevelTransition = false;
+                        startCountdown();
+                    }
+                }
+            }
+        }
+        
+        // Start countdown after enemies are released
+        function startCountdown() {
+            gameState.inCountdown = true;
+            gameState.countdownNumber = 3;
+            gameState.countdownTimer = 0;
+            gameState.showGo = false;
+        }
+        
+        // Update countdown
+        function updateCountdown() {
+            if (!gameState.inCountdown) return;
+            
+            gameState.countdownTimer++;
+            
+            if (!gameState.showGo) {
+                // Each number shows for 60 frames (1 second at 60fps)
+                if (gameState.countdownTimer >= 60) {
+                    gameState.countdownNumber--;
+                    gameState.countdownTimer = 0;
+                    
+                    if (gameState.countdownNumber < 1) {
+                        // Show "Go!" for 1 second
+                        gameState.showGo = true;
+                        gameState.countdownTimer = 0;
+                    }
+                }
+            } else {
+                // "Go!" is showing - check if time is up
+                if (gameState.countdownTimer >= 60) {
+                    // End countdown after "Go!" is shown
+                    gameState.inCountdown = false;
+                    gameState.showGo = false;
+                }
+            }
+        }
+        
+        // Draw countdown
+        function drawCountdown() {
+            if (!gameState.inCountdown) return;
+            
+            ctx.save();
+            ctx.globalAlpha = 0.9;
+            
+            if (gameState.showGo) {
+                // Draw "Go!" message
+                ctx.fillStyle = colors.yellow;
+                ctx.font = 'bold 120px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'rgba(255, 219, 91, 0.8)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('GO!', canvas.width / 2, canvas.height / 2);
+            } else if (gameState.countdownNumber > 0) {
+                // Draw countdown number
+                ctx.fillStyle = colors.pink;
+                ctx.font = 'bold 150px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'rgba(241, 172, 252, 0.8)';
+                ctx.shadowBlur = 20;
+                ctx.fillText(gameState.countdownNumber.toString(), canvas.width / 2, canvas.height / 2);
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw transition kubie
+        function drawTransitionKubie() {
+            if (!gameState.inLevelTransition) return;
+            
+            if (playerImage.complete) {
+                ctx.save();
+                // Draw larger version
+                ctx.drawImage(
+                    playerImage, 
+                    transitionKubie.x, 
+                    transitionKubie.y, 
+                    transitionKubie.width, 
+                    transitionKubie.height
+                );
+                ctx.restore();
+            } else {
+                // Fallback
+                ctx.fillStyle = colors.primaryPurple;
+                ctx.beginPath();
+                ctx.moveTo(transitionKubie.x + transitionKubie.width / 2, transitionKubie.y);
+                ctx.lineTo(transitionKubie.x, transitionKubie.y + transitionKubie.height);
+                ctx.lineTo(transitionKubie.x + transitionKubie.width / 4, transitionKubie.y + transitionKubie.height * 0.7);
+                ctx.lineTo(transitionKubie.x + transitionKubie.width * 3/4, transitionKubie.y + transitionKubie.height * 0.7);
+                ctx.lineTo(transitionKubie.x + transitionKubie.width, transitionKubie.y + transitionKubie.height);
+                ctx.closePath();
+                ctx.fill();
             }
         }
 
         // Draw player
         function drawPlayer() {
+            // Animation effect when losing a life
+            let drawX = player.x;
+            let drawY = player.y;
+            let alpha = 1;
+            
+            if (gameState.losingLife) {
+                const progress = gameState.lifeLossAnimationTime / gameState.lifeLossAnimationDuration;
+                
+                // Flash effect - alternate between visible and invisible
+                const flashRate = Math.sin(progress * Math.PI * 10);
+                alpha = flashRate > 0 ? 1 : 0.3;
+                
+                // Shake effect
+                const shakeAmount = 10 * (1 - progress);
+                drawX += (Math.random() - 0.5) * shakeAmount;
+                drawY += (Math.random() - 0.5) * shakeAmount;
+                
+                // Explosion particles effect
+                if (progress < 0.5) {
+                    ctx.save();
+                    ctx.globalAlpha = (1 - progress * 2) * 0.8;
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2;
+                        const distance = progress * 50;
+                        const particleX = player.x + player.width / 2 + Math.cos(angle) * distance;
+                        const particleY = player.y + player.height / 2 + Math.sin(angle) * distance;
+                        ctx.fillStyle = colors.yellow;
+                        ctx.beginPath();
+                        ctx.arc(particleX, particleY, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+            }
+            
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            
             if (playerImage.complete) {
-                ctx.drawImage(playerImage, player.x, player.y, player.width, player.height);
+                ctx.drawImage(playerImage, drawX, drawY, player.width, player.height);
             } else {
                 // Fallback if image hasn't loaded yet
                 ctx.fillStyle = player.color;
                 ctx.beginPath();
-                ctx.moveTo(player.x + player.width / 2, player.y);
-                ctx.lineTo(player.x, player.y + player.height);
-                ctx.lineTo(player.x + player.width / 4, player.y + player.height * 0.7);
-                ctx.lineTo(player.x + player.width * 3/4, player.y + player.height * 0.7);
-                ctx.lineTo(player.x + player.width, player.y + player.height);
+                ctx.moveTo(drawX + player.width / 2, drawY);
+                ctx.lineTo(drawX, drawY + player.height);
+                ctx.lineTo(drawX + player.width / 4, drawY + player.height * 0.7);
+                ctx.lineTo(drawX + player.width * 3/4, drawY + player.height * 0.7);
+                ctx.lineTo(drawX + player.width, drawY + player.height);
                 ctx.closePath();
                 ctx.fill();
             }
+            
+            ctx.restore();
         }
 
         // Draw bullets
         function drawBullets() {
             ctx.fillStyle = colors.green;
             bullets.forEach(bullet => {
-                ctx.fillRect(bullet.x, bullet.y, 6, 15);
+                if (piercingBulletsActive) {
+                    // Draw larger bullet when piercing is active
+                    ctx.fillRect(bullet.x - 2, bullet.y, 10, 18);
+                } else {
+                    // Normal bullet size
+                    ctx.fillRect(bullet.x, bullet.y, 6, 15);
+                }
+            });
+        }
+        
+        // Draw fire bombs
+        function drawFireBombs() {
+            fireBombs.forEach(fireBomb => {
+                if (fireBombImage.complete) {
+                    ctx.drawImage(fireBombImage, fireBomb.x, fireBomb.y, fireBomb.width, fireBomb.height);
+                } else {
+                    // Fallback - draw yellow circle for fire bomb (using Testkube palette)
+                    ctx.fillStyle = colors.yellow;
+                    ctx.beginPath();
+                    ctx.arc(fireBomb.x + fireBomb.width / 2, fireBomb.y + fireBomb.height / 2, fireBomb.width / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Add glow effect
+                    ctx.fillStyle = colors.pink;
+                    ctx.beginPath();
+                    ctx.arc(fireBomb.x + fireBomb.width / 2, fireBomb.y + fireBomb.height / 2, fireBomb.width / 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             });
         }
 
         // Draw enemies
         function drawEnemies() {
             enemies.forEach(enemy => {
-                if (enemyImage.complete) {
-                    ctx.drawImage(enemyImage, enemy.x, enemy.y, enemy.width, enemy.height);
+                // Don't draw enemies during transition until they are released
+                if (gameState.inLevelTransition && !enemy.released) {
+                    return;
+                }
+                
+                if (enemy.fallingAsBomb) {
+                    // Draw falling enemy as fire bomb
+                    if (fireBombImage.complete) {
+                        ctx.drawImage(fireBombImage, enemy.x, enemy.y, enemy.width, enemy.height);
+                    } else {
+                        // Fallback - draw yellow circle for fire bomb (using Testkube palette)
+                        ctx.fillStyle = colors.yellow;
+                        ctx.beginPath();
+                        ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, enemy.width / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Add glow effect
+                        ctx.fillStyle = colors.pink;
+                        ctx.beginPath();
+                        ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, enemy.width / 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                } else if (enemy.isSpecial) {
+                    // Apply shake offset for red kubies
+                    const shakeX = enemy.shakeX || 0;
+                    const shakeY = enemy.shakeY || 0;
+                    
+                    // Draw special red kubie with shake offset
+                    const redKubieImg = redKubieImages[enemy.redKubieIndex];
+                    if (redKubieImg && redKubieImg.complete) {
+                        ctx.drawImage(redKubieImg, enemy.x + shakeX, enemy.y + shakeY, enemy.width, enemy.height);
+                    } else {
+                        // Fallback if image hasn't loaded yet (using Testkube palette)
+                        ctx.fillStyle = colors.pink; // Pink for special enemies
+                        ctx.fillRect(enemy.x + shakeX, enemy.y + shakeY, enemy.width, enemy.height);
+                    }
                 } else {
-                    // Fallback if image hasn't loaded yet
-                    ctx.fillStyle = colors.primaryPurple;
-                    ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    // Draw regular purple kubie
+                    if (enemyImage.complete) {
+                        ctx.drawImage(enemyImage, enemy.x, enemy.y, enemy.width, enemy.height);
+                    } else {
+                        // Fallback if image hasn't loaded yet
+                        ctx.fillStyle = colors.primaryPurple;
+                        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    }
                 }
             });
         }
@@ -297,112 +818,651 @@
                 return bullet.y > 0;
             });
         }
+        
+        // Update fire bombs
+        function updateFireBombs() {
+            fireBombs = fireBombs.filter(fireBomb => {
+                fireBomb.y += fireBombSpeed;
+                // Remove if it goes off the bottom of the screen
+                return fireBomb.y < canvas.height;
+            });
+        }
+
+        // Update piercing indicator
+        function updatePiercingIndicator() {
+            const indicator = document.getElementById('piercingIndicator');
+            const timeSpan = document.getElementById('piercingTime');
+            const messageSpan = document.getElementById('piercingMessage');
+            const unitSpan = document.getElementById('piercingUnit');
+            
+            if (piercingTimeRemaining > 0) {
+                indicator.style.visibility = 'visible';
+                timeSpan.textContent = Math.ceil(piercingTimeRemaining);
+                
+                // Check if super-piercing is active
+                const isSuperPiercing = piercingTimeActive > superPiercingThreshold;
+                if (isSuperPiercing) {
+                    messageSpan.textContent = 'Super-piercing bullets active for';
+                    unitSpan.textContent = 'seconds';
+                } else {
+                    messageSpan.textContent = 'Piercing bullets active for';
+                    unitSpan.textContent = 'seconds';
+                }
+            } else {
+                indicator.style.visibility = 'hidden';
+                piercingBulletsActive = false;
+            }
+        }
+
+        // Update enemy speed based on current state
+        function updateEnemySpeed() {
+            if (enemies.length > 0) {
+                const baseSpeedForLevel = getBaseSpeedForLevel(gameState.level);
+                
+                if (totalRedKubiesInLevel > 0) {
+                    // Base speed starts slower and increases as red kubies are killed
+                    const initialSpeed = baseSpeedForLevel - (totalRedKubiesInLevel * speedPerRedKubie);
+                    // Each red kubie killed increases speed by speedPerRedKubie
+                    const baseSpeed = initialSpeed + (redKubiesKilled * speedPerRedKubie);
+                    
+                    // Add additional speed boost as enemies are destroyed
+                    enemySpeed = baseSpeed + (enemyRows * enemyCols - enemies.length) * 0.025;
+                } else {
+                    // Level 1: no red kubies, just use base speed for level with boost
+                    enemySpeed = baseSpeedForLevel + (enemyRows * enemyCols - enemies.length) * 0.025;
+                }
+            }
+        }
 
         // Update enemies
         function updateEnemies() {
-            const now = Date.now();
-            let edgeReached = false;
+            // Don't update enemies during level transition, countdown, or level complete message
+            if (gameState.inLevelTransition || gameState.inCountdown || gameState.showingLevelComplete) return;
             
-            // Find the lowest enemy to check distance from player
-            let lowestEnemyY = 0;
-            enemies.forEach(enemy => {
-                if (enemy.y > lowestEnemyY) {
-                    lowestEnemyY = enemy.y;
-                }
-            });
-            const distanceFromPlayer = player.y - (lowestEnemyY + enemyHeight);
-            
-            // Random direction change at unpredictable intervals
-            if (now >= nextDirectionChange) {
-                // Only allow random direction change if enemies are not too close to player
-                // 20% chance to change direction randomly (reduced from 30%)
-                if (Math.random() < 0.2 && distanceFromPlayer > 150) {
-                    enemyDirection *= -1;
-                    // Rarely drop down when changing direction (reduced from 40% to 15%)
-                    if (Math.random() < 0.15 && distanceFromPlayer > 200) {
-                        const smallDrop = enemyDropDistance * (0.3 + Math.random() * 0.2); // Smaller drop
-                        enemies.forEach(enemy => {
-                            enemy.y += smallDrop;
+            // Boss fire bomb drops at regular intervals when at half health or below (level 15)
+            if (gameState.level === 15 && enemies.length > 0) {
+                const boss = enemies.find(enemy => enemy.isBoss);
+                if (boss && !boss.fallingAsBomb && boss.hits >= bossHalfHealth) {
+                    // Calculate fire bomb drop interval based on hits (only when at half health or below)
+                    const hitsForReduction = Math.floor((boss.hits - bossHalfHealth) / 10); // Every 10 hits after half health
+                    const currentInterval = bossFireBombBaseInterval - (hitsForReduction * bossFireBombIntervalReduction);
+                    const minInterval = 30; // Minimum 0.5 seconds
+                    const actualInterval = Math.max(minInterval, currentInterval);
+                    
+                    bossFireBombTimer++;
+                    if (bossFireBombTimer >= actualInterval) {
+                        // Drop a fire bomb from the boss
+                        fireBombs.push({
+                            x: boss.x + boss.width / 2 - fireBombSize / 2,
+                            y: boss.y + boss.height,
+                            width: fireBombSize,
+                            height: fireBombSize
                         });
+                        bossFireBombTimer = 0; // Reset timer
                     }
                 }
-                // Set next random direction change (2-5 seconds, longer intervals)
-                directionChangeInterval = 2000 + Math.random() * 3000;
-                nextDirectionChange = now + directionChangeInterval;
             }
+            
+            let edgeReached = false;
 
             // Add random speed variation (0.85x to 1.2x, reduced range)
             const speedMultiplier = 0.85 + Math.random() * 0.35;
             const currentSpeed = enemySpeed * speedMultiplier;
 
+            // Handle falling enemies (bombs) first
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                if (enemy.fallingAsBomb) {
+                    // Falling enemies drop straight down
+                    enemy.y += fireBombSpeed;
+                    
+                    // Remove if it goes off the bottom of the screen
+                    if (enemy.y > canvas.height) {
+                        enemies.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // Check collision with player
+                    if (enemy.x < player.x + player.width &&
+                        enemy.x + enemy.width > player.x &&
+                        enemy.y < player.y + player.height &&
+                        enemy.y + enemy.height > player.y) {
+                        // Falling enemy hit player - lose a life
+                        enemies.splice(i, 1);
+                        if (!gameState.losingLife) {
+                            loseLife('bomb');
+                        }
+                        continue;
+                    }
+                }
+            }
+            
             enemies.forEach(enemy => {
+                // Skip falling enemies for normal movement
+                if (enemy.fallingAsBomb) return;
+                
+                // Update shake effect for boss and special enemies
+                if (enemy.isBoss || (enemy.isSpecial && enemy.shakeIntensity !== undefined)) {
+                    if (enemy.shakeIntensity > 0) {
+                        // Generate random shake offset
+                        enemy.shakeX = (Math.random() - 0.5) * enemy.shakeIntensity;
+                        enemy.shakeY = (Math.random() - 0.5) * enemy.shakeIntensity;
+                        // Decay shake intensity
+                        enemy.shakeIntensity *= 0.85;
+                        if (enemy.shakeIntensity < 0.1) {
+                            enemy.shakeIntensity = 0;
+                            enemy.shakeX = 0;
+                            enemy.shakeY = 0;
+                        }
+                    }
+                }
+                
+                // Boss movement (moves like regular enemies but uses bossSpeed)
+                if (enemy.isBoss) {
+                    // Use boss speed instead of regular enemy speed
+                    const speedMultiplier = 0.85 + Math.random() * 0.35;
+                    const currentBossSpeed = bossSpeed * speedMultiplier;
+                    const individualVariation = 0.95 + Math.random() * 0.1;
+                    enemy.x += currentBossSpeed * enemyDirection * individualVariation;
+                    
+                    // Clamp boss position to prevent going too far past edge
+                    if (enemy.x < 0) {
+                        enemy.x = 0;
+                        edgeReached = true;
+                    } else if (enemy.x + enemy.width > canvas.width) {
+                        enemy.x = canvas.width - enemy.width;
+                        edgeReached = true;
+                    }
+                    return; // Boss movement handled, skip regular enemy movement
+                }
+                
+                
                 // Add slight random variation to each enemy's movement (reduced variation)
                 const individualVariation = 0.95 + Math.random() * 0.1;
                 enemy.x += currentSpeed * enemyDirection * individualVariation;
                 
-                if (enemy.x <= 0 || enemy.x + enemy.width >= canvas.width) {
+                // Clamp enemy position to prevent going too far past edge
+                if (enemy.x < 0) {
+                    enemy.x = 0;
+                    edgeReached = true;
+                } else if (enemy.x + enemy.width > canvas.width) {
+                    enemy.x = canvas.width - enemy.width;
                     edgeReached = true;
                 }
             });
 
             if (edgeReached) {
                 enemyDirection *= -1;
-                // Random drop distance when hitting edge (reduced range)
-                const dropAmount = enemyDropDistance * (0.8 + Math.random() * 0.4);
-                // Safety check: don't drop if too close to player
-                if (distanceFromPlayer > 100) {
-                    enemies.forEach(enemy => {
+                // Consistent drop distance when hitting edge
+                const dropAmount = enemyDropDistance;
+                // Always drop when hitting edge - this ensures enemies progress downward
+                enemies.forEach(enemy => {
+                    if (!enemy.fallingAsBomb) {
                         enemy.y += dropAmount;
-                    });
-                }
-                // Reset random direction change timer after edge hit
-                directionChangeInterval = 2000 + Math.random() * 3000;
-                nextDirectionChange = now + directionChangeInterval;
+                        
+                        // Boss speeds up each time it moves down
+                        if (enemy.isBoss) {
+                            bossSpeed += bossSpeedIncreasePerDrop;
+                        }
+                    }
+                });
             }
 
-            // Check if enemies reached bottom
+            // Check if enemies reached bottom (exclude falling enemies and boss)
             enemies.forEach(enemy => {
-                if (enemy.y + enemy.height >= player.y) {
-                    gameOver();
+                if (!enemy.fallingAsBomb && !enemy.isBoss && enemy.y + enemy.height >= player.y) {
+                    loseLife('enemy');
+                    return;
                 }
             });
         }
 
         // Collision detection
         function checkCollisions() {
+            let scoreChanged = false; // Track if score changed to batch DOM update
+            let speedNeedsUpdate = false; // Track if speed needs recalculation
+            
             // Bullet-enemy collisions
-            bullets.forEach((bullet, bulletIndex) => {
-                enemies.forEach((enemy, enemyIndex) => {
-                    if (bullet.x < enemy.x + enemy.width &&
-                        bullet.x + 6 > enemy.x &&
+            for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+                const bullet = bullets[bulletIndex];
+                let bulletRemoved = false;
+                
+                // Track which enemies this bullet has already hit (to prevent multiple hits from same bullet)
+                if (!bullet.hitEnemies) {
+                    bullet.hitEnemies = new Set();
+                }
+                
+                for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex--) {
+                    const enemy = enemies[enemyIndex];
+                    
+                    // Skip enemies that are falling as bombs - they can't be shot
+                    if (enemy.fallingAsBomb) continue;
+                    
+                    // Skip if this bullet has already hit this enemy
+                    if (bullet.hitEnemies.has(enemyIndex)) continue;
+                    
+                    // Use larger collision box when piercing bullets are active
+                    const bulletWidth = piercingBulletsActive ? 10 : 6;
+                    const bulletHeight = piercingBulletsActive ? 18 : 15;
+                    const bulletX = piercingBulletsActive ? bullet.x - 2 : bullet.x;
+                    
+                    if (bulletX < enemy.x + enemy.width &&
+                        bulletX + bulletWidth > enemy.x &&
                         bullet.y < enemy.y + enemy.height &&
-                        bullet.y + 15 > enemy.y) {
+                        bullet.y + bulletHeight > enemy.y) {
                         // Collision!
-                        bullets.splice(bulletIndex, 1);
-                        enemies.splice(enemyIndex, 1);
-                        gameState.score += 10;
-                        document.getElementById('score').textContent = gameState.score;
                         
-                        // Increase speed as enemies are destroyed
-                        if (enemies.length > 0) {
-                            enemySpeed = 2.5 + (enemyRows * enemyCols - enemies.length) * 0.025;
+                        // Mark this enemy as hit by this bullet
+                        bullet.hitEnemies.add(enemyIndex);
+                        
+                        if (enemy.isSpecial) {
+                            // Special enemy (red kubie): check if super-piercing is active
+                            const isSuperPiercing = piercingBulletsActive && piercingTimeActive > superPiercingThreshold;
+                            
+                            // Special enemy: increment hits (only once per bullet per enemy)
+                            enemy.hits++;
+                            
+                            // Check if this is a boss (requires 80 hits) or regular red enemy (requires 5 hits)
+                            const hitsRequired = enemy.isBoss ? bossHitsRequired : 5;
+                            
+                            // Boss drops fire bomb when hit
+                            if (enemy.isBoss && enemy.hits < hitsRequired) {
+                                fireBombs.push({
+                                    x: enemy.x + enemy.width / 2 - fireBombSize / 2,
+                                    y: enemy.y + enemy.height,
+                                    width: fireBombSize,
+                                    height: fireBombSize
+                                });
+                            }
+                            
+                            // Trigger shake effect when hit (boss shakes more intensely)
+                            if (enemy.hits < hitsRequired) {
+                                enemy.shakeIntensity = enemy.isBoss ? 12 : 8; // Boss shakes more
+                            }
+                            
+                            if (enemy.hits >= hitsRequired) {
+                                // Enemy destroyed
+                                if (enemy.isBoss) {
+                                    // Boss defeated - show victory screen
+                                    gameState.score += 500; // Big points for boss
+                                    scoreChanged = true;
+                                    enemies.splice(enemyIndex, 1); // Remove boss
+                                    showVictory();
+                                    break; // Exit collision loop
+                                } else {
+                                    // Regular special enemy destroyed after 5 hits
+                                    gameState.score += 50; // More points for special enemies
+                                    scoreChanged = true;
+                                    
+                                    // Speed up when a red kubie is killed
+                                    redKubiesKilled++;
+                                    
+                                    // Increase player speed slightly for each red kubie killed
+                                    player.speed += playerSpeedIncreasePerRedKubie;
+                                    
+                                    // Activate piercing bullets for 5 seconds per red kubie killed
+                                    piercingTimeRemaining += piercingDurationPerRedKubie;
+                                    piercingBulletsActive = true;
+                                    updatePiercingIndicator();
+                                    
+                                    speedNeedsUpdate = true;
+                                    
+                                    // Levels 5+: Make the killed red enemy fall as a bomb
+                                    if (gameState.level >= 5) {
+                                        enemy.fallingAsBomb = true;
+                                        enemy.isSpecial = false; // No longer special, just a falling bomb
+                                        
+                                        // Level 10+: All remaining red enemies release fire bombs
+                                        if (gameState.level >= 10) {
+                                            enemies.forEach(remainingEnemy => {
+                                                if (remainingEnemy.isSpecial && remainingEnemy !== enemy) {
+                                                    fireBombs.push({
+                                                        x: remainingEnemy.x + remainingEnemy.width / 2 - fireBombSize / 2,
+                                                        y: remainingEnemy.y + remainingEnemy.height,
+                                                        width: fireBombSize,
+                                                        height: fireBombSize
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    } else {
+                                        // Below level 5, just remove the enemy
+                                        enemies.splice(enemyIndex, 1);
+                                    }
+                                }
+                            } else {
+                                // Hit but not destroyed - give some points
+                                gameState.score += 2;
+                                scoreChanged = true;
+                            }
+                            
+                            // If super-piercing is active, bullet continues through red enemies
+                            if (isSuperPiercing) {
+                                // Bullet continues, don't remove it or break - it can hit more enemies
+                                continue;
+                            } else {
+                                // Normal piercing or no piercing: bullet stops at red kubie
+                                if (!bulletRemoved) {
+                                    bullets.splice(bulletIndex, 1);
+                                    bulletRemoved = true;
+                                }
+                                break; // Bullet consumed, break out of loop
+                            }
+                        } else {
+                            // Regular enemy: destroyed immediately
+                            enemies.splice(enemyIndex, 1);
+                            gameState.score += 10;
+                            scoreChanged = true;
+                            
+                            // Remove bullet if piercing is not active, or if bullet was already removed
+                            if (!piercingBulletsActive && !bulletRemoved) {
+                                bullets.splice(bulletIndex, 1);
+                                bulletRemoved = true;
+                                break; // Bullet consumed, break out of loop
+                            }
+                            // If piercing is active, bullet continues through regular enemies
+                            
+                            speedNeedsUpdate = true;
                         }
                     }
-                });
-            });
-
-            // Check win condition
-            if (enemies.length === 0) {
-                gameState.gameRunning = false;
-                document.getElementById('gameOverText').textContent = 'You Win!';
-                document.getElementById('finalScore').textContent = gameState.score;
-                document.getElementById('gameOver').style.display = 'block';
-                startCountdown();
+                }
             }
+            
+            // Batch DOM updates - only update score once per frame
+            if (scoreChanged) {
+                document.getElementById('score').textContent = gameState.score;
+            }
+            
+            // Only recalculate speed once per frame if needed
+            if (speedNeedsUpdate) {
+                updateEnemySpeed();
+            }
+
+            // Fire bomb - player collisions (level 5+)
+            if (gameState.level >= 5 && !gameState.losingLife) {
+                for (let i = fireBombs.length - 1; i >= 0; i--) {
+                    const fireBomb = fireBombs[i];
+                    
+                    if (fireBomb.x < player.x + player.width &&
+                        fireBomb.x + fireBomb.width > player.x &&
+                        fireBomb.y < player.y + player.height &&
+                        fireBomb.y + fireBomb.height > player.y) {
+                        // Fire bomb hit player - lose a life
+                        fireBombs.splice(i, 1); // Remove the fire bomb
+                        loseLife('bomb');
+                        return;
+                    }
+                }
+            }
+
+            // Check level complete condition (exclude falling enemies)
+            const activeEnemies = enemies.filter(enemy => !enemy.fallingAsBomb);
+            if (activeEnemies.length === 0 && !gameState.inLevelTransition && !gameState.showingLevelComplete) {
+                // Show level completion message
+                showLevelComplete();
+            }
+        }
+        
+        // Show level completion message
+        function showLevelComplete() {
+            gameState.showingLevelComplete = true;
+            gameState.levelCompleteTimer = 0;
+            
+            // Clear bullets and fire bombs
+            bullets = [];
+            fireBombs = [];
+        }
+        
+        // Update level completion message
+        function updateLevelComplete() {
+            if (!gameState.showingLevelComplete) return;
+            
+            gameState.levelCompleteTimer++;
+            
+            // After message duration, advance to next level (unless level 15 - victory handled separately)
+            if (gameState.levelCompleteTimer >= gameState.levelCompleteDuration) {
+                gameState.showingLevelComplete = false;
+                gameState.levelCompleteTimer = 0;
+                
+                // Don't advance past level 15 (victory screen handles that)
+                if (gameState.level >= 15) {
+                    return;
+                }
+                
+                // Advance to next level
+                gameState.level++;
+                gameState.lives++; // Award one additional life for completing level
+                document.getElementById('level').textContent = gameState.level;
+                document.getElementById('lives').textContent = gameState.lives;
+                
+                // Reset for next level
+                player.x = canvas.width / 2 - 37.5;
+                initEnemies(true); // Start with transition
+            }
+        }
+        
+        // Draw level completion message
+        function drawLevelComplete() {
+            if (!gameState.showingLevelComplete) return;
+            
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            
+            // Draw background overlay (using Testkube palette)
+            ctx.fillStyle = 'rgba(22, 15, 49, 0.8)'; // darkPurple with 80% opacity
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw message
+            const completedLevel = gameState.level; // Level that was just completed
+            
+            ctx.fillStyle = colors.yellow;
+            ctx.font = 'bold 80px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(255, 219, 91, 0.8)';
+            ctx.shadowBlur = 20;
+            ctx.fillText('LEVEL ' + completedLevel + ' COMPLETED!', canvas.width / 2, canvas.height / 2);
+            
+            ctx.restore();
+        }
+        
+        // Victory screen - dancing player
+        let victoryPlayer = {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            baseX: 0,
+            baseY: 0,
+            bounceOffset: 0,
+            rotation: 0
+        };
+        
+        // Show victory screen
+        function showVictory() {
+            gameState.showingVictory = true;
+            gameState.victoryTimer = 0;
+            gameState.gameRunning = false; // Stop game loop updates
+            
+            // Clear bullets and fire bombs
+            bullets = [];
+            fireBombs = [];
+            
+            // Create big dancing player (3x normal size)
+            const playerScale = 3;
+            victoryPlayer.width = player.width * playerScale;
+            victoryPlayer.height = player.height * playerScale;
+            victoryPlayer.baseX = canvas.width / 2 - victoryPlayer.width / 2;
+            // Position player below the text (last line baseline is at y=360, text extends to ~y=400, player height is ~135px)
+            // Position player center at y=500 to ensure it's fully below the text
+            victoryPlayer.baseY = 500 - victoryPlayer.height / 2;
+            victoryPlayer.x = victoryPlayer.baseX;
+            victoryPlayer.y = victoryPlayer.baseY;
+            victoryPlayer.bounceOffset = 0;
+            victoryPlayer.rotation = 0;
+        }
+        
+        // Update victory screen animation
+        function updateVictory() {
+            if (!gameState.showingVictory) return;
+            
+            gameState.victoryTimer++;
+            
+            // Happy dance animation: bounce up and down with slight rotation
+            const bounceSpeed = 0.15;
+            const bounceAmount = 15; // How much it bounces
+            const rotationSpeed = 0.08;
+            const rotationAmount = 0.15; // Max rotation in radians (about 8.6 degrees)
+            
+            // Bounce up and down
+            victoryPlayer.bounceOffset = Math.sin(gameState.victoryTimer * bounceSpeed) * bounceAmount;
+            victoryPlayer.y = victoryPlayer.baseY + victoryPlayer.bounceOffset;
+            
+            // Slight rotation back and forth
+            victoryPlayer.rotation = Math.sin(gameState.victoryTimer * rotationSpeed) * rotationAmount;
+        }
+        
+        // Draw victory screen
+        function drawVictory() {
+            if (!gameState.showingVictory) return;
+            
+            ctx.save();
+            ctx.globalAlpha = 0.95;
+            
+            // Draw background overlay (using Testkube palette)
+            ctx.fillStyle = 'rgba(22, 15, 49, 0.9)'; // darkPurple with 90% opacity
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw victory message
+            ctx.fillStyle = colors.yellow;
+            ctx.font = 'bold 60px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(255, 219, 91, 0.8)';
+            ctx.shadowBlur = 20;
+            
+            const lines = [ "Yay!", "You saved the world from", "test automation mayhem and", "restored Testkube order!" ]; 
+            
+            lines.forEach((line, index) => {
+                ctx.fillText(line, canvas.width / 2, 150 + index * 70);
+            });
+            
+            // Draw big dancing player
+            ctx.save();
+            // Translate to center of player for rotation
+            ctx.translate(victoryPlayer.x + victoryPlayer.width / 2, victoryPlayer.y + victoryPlayer.height / 2);
+            ctx.rotate(victoryPlayer.rotation);
+            
+            if (playerImage.complete) {
+                ctx.drawImage(
+                    playerImage, 
+                    -victoryPlayer.width / 2, 
+                    -victoryPlayer.height / 2, 
+                    victoryPlayer.width, 
+                    victoryPlayer.height
+                );
+            } else {
+                // Fallback
+                ctx.fillStyle = player.color;
+                ctx.beginPath();
+                ctx.moveTo(0, -victoryPlayer.height / 2);
+                ctx.lineTo(-victoryPlayer.width / 2, victoryPlayer.height / 2);
+                ctx.lineTo(-victoryPlayer.width / 4, victoryPlayer.height / 2 * 0.7);
+                ctx.lineTo(victoryPlayer.width / 4, victoryPlayer.height / 2 * 0.7);
+                ctx.lineTo(victoryPlayer.width / 2, victoryPlayer.height / 2);
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.restore();
+            
+            ctx.restore();
+        }
+        
+        // Lose a life with animation
+        function loseLife(reason) {
+            if (gameState.losingLife) return; // Prevent multiple calls
+            
+            gameState.lives--;
+            gameState.losingLife = true;
+            gameState.lifeLossAnimationTime = 0;
+            document.getElementById('lives').textContent = gameState.lives;
+            
+            // Reset piercing bullets when player dies
+            piercingTimeRemaining = 0;
+            piercingTimeActive = 0;
+            piercingBulletsActive = false;
+            updatePiercingIndicator();
+            
+            // Remove all bullets and fire bombs during animation
+            bullets = [];
+            fireBombs = [];
+            
+            if (gameState.lives <= 0) {
+                // No lives left - game over after animation
+                setTimeout(() => {
+                    gameOver();
+                }, gameState.lifeLossAnimationDuration * 16); // Convert frames to ms
+            } else {
+                // Has lives left - handle based on reason
+                setTimeout(() => {
+                    if (reason === 'bomb') {
+                        // Bomb hit - just reset player, keep enemies
+                        resetPlayer();
+                    } else {
+                        // Enemies reached bottom - restart entire level
+                        restartLevel();
+                    }
+                }, gameState.lifeLossAnimationDuration * 16);
+            }
+        }
+        
+        // Reset player position only (for bomb hits)
+        function resetPlayer() {
+            gameState.losingLife = false;
+            gameState.lifeLossAnimationTime = 0;
+            gameState.inCountdown = false; // Reset countdown state
+            bullets = [];
+            fireBombs = [];
+            player.x = canvas.width / 2 - 37.5;
+            // Keep player speed, redKubiesKilled as they are
+            // Enemies remain in their current positions
+            // Piercing bullets are reset in loseLife()
+        }
+        
+        // Restart current level with one less life (for enemy bottom collision)
+        function restartLevel() {
+            gameState.losingLife = false;
+            gameState.lifeLossAnimationTime = 0;
+            gameState.inCountdown = false; // Reset countdown state
+            bullets = [];
+            fireBombs = [];
+            player.x = canvas.width / 2 - 37.5;
+            player.speed = basePlayerSpeed; // Reset player speed
+            redKubiesKilled = 0;
+            piercingTimeRemaining = 0;
+            piercingTimeActive = 0;
+            piercingBulletsActive = false;
+            bossSpeed = baseSpeedLevel1; // Reset boss speed
+            updatePiercingIndicator();
+            initEnemies(true); // Start with transition
         }
 
         // Game loop
         function gameLoop() {
+            // Handle victory screen separately (runs even when gameRunning is false)
+            if (gameState.showingVictory) {
+                // Clear canvas
+                ctx.fillStyle = colors.darkPurple;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Update and draw victory screen
+                updateVictory();
+                drawVictory();
+                
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+            
             if (!gameState.gameRunning) return;
 
             // Clear canvas
@@ -417,26 +1477,178 @@
                 ctx.fillRect(x, y, 3, 3);
             }
 
-            // Only update game logic if not paused
-            if (!gameState.paused) {
-                updateBullets();
-                updateEnemies();
-                checkCollisions();
+            // Update life loss animation
+            if (gameState.losingLife) {
+                gameState.lifeLossAnimationTime++;
+            }
+            
+            // Update countdown
+            if (gameState.inCountdown) {
+                updateCountdown();
+            }
+            
+            // Update level completion message
+            if (gameState.showingLevelComplete) {
+                updateLevelComplete();
+            }
+            
+            // Update cheat message
+            if (gameState.showingCheatMessage) {
+                updateCheatMessage();
+            }
+            
+            // Only update game logic if not paused and not losing a life
+            if (!gameState.paused && !gameState.losingLife && !gameState.inCountdown && !gameState.showingLevelComplete) {
+                // Update level transition
+                if (gameState.inLevelTransition) {
+                    updateLevelTransition();
+                } else {
+                    // Update piercing timer
+                    const currentTime = Date.now();
+                    const deltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
+                    lastFrameTime = currentTime;
+                    
+                    if (piercingTimeRemaining > 0) {
+                        piercingTimeRemaining -= deltaTime;
+                        piercingTimeActive += deltaTime; // Track total active time
+                        if (piercingTimeRemaining <= 0) {
+                            piercingTimeRemaining = 0;
+                            piercingBulletsActive = false;
+                            piercingTimeActive = 0; // Reset active time when piercing ends
+                        }
+                        updatePiercingIndicator();
+                    } else {
+                        // Reset active time when piercing is not active
+                        piercingTimeActive = 0;
+                    }
+                    
+                    updateBullets();
+                    updateFireBombs();
+                    updateEnemies();
+                    checkCollisions();
+                }
             }
             
             // Always draw (so game is visible when paused)
             drawEnemies();
             drawBullets();
+            drawFireBombs();
             drawPlayer();
+            drawTransitionKubie();
+            drawCountdown();
+            drawLevelComplete();
+            drawCheatMessage();
 
             requestAnimationFrame(gameLoop);
         }
 
         // Keyboard controls
         const keys = {};
+        
+        // Cheat code tracker
+        let cheatCode = '';
+        const cheatSequence = 'testkube';
+        
+        // Function to activate cheat code
+        function activateCheatCode() {
+            gameState.level = 10;
+            gameState.lives = 10;
+            document.getElementById('level').textContent = gameState.level;
+            document.getElementById('lives').textContent = gameState.lives;
+            
+            // Reset game state
+            gameState.gameRunning = true;
+            gameState.paused = false;
+            gameState.inLevelTransition = false;
+            gameState.losingLife = false;
+            gameState.lifeLossAnimationTime = 0;
+            gameState.inCountdown = false;
+            gameState.countdownNumber = 3;
+            gameState.countdownTimer = 0;
+            gameState.showGo = false;
+            gameState.showingLevelComplete = false;
+            gameState.levelCompleteTimer = 0;
+            
+            // Clear everything
+            bullets = [];
+            fireBombs = [];
+            player.x = canvas.width / 2 - 37.5;
+            player.speed = basePlayerSpeed;
+            redKubiesKilled = 0;
+            piercingTimeRemaining = 0;
+            piercingTimeActive = 0;
+            piercingBulletsActive = false;
+            updatePiercingIndicator();
+            
+            // Hide overlays
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('pauseOverlay').style.display = 'none';
+            
+            // Show cheat code activated message
+            gameState.showingCheatMessage = true;
+            gameState.cheatMessageTimer = 0;
+            
+            // Start new level
+            initEnemies(true);
+        }
+        
+        // Update cheat message
+        function updateCheatMessage() {
+            if (!gameState.showingCheatMessage) return;
+            
+            gameState.cheatMessageTimer++;
+            
+            // Hide message after duration
+            if (gameState.cheatMessageTimer >= gameState.cheatMessageDuration) {
+                gameState.showingCheatMessage = false;
+                gameState.cheatMessageTimer = 0;
+            }
+        }
+        
+        // Draw cheat message
+        function drawCheatMessage() {
+            if (!gameState.showingCheatMessage) return;
+            
+            // Blinking effect - visible every other 10 frames
+            const blinkRate = Math.floor(gameState.cheatMessageTimer / 10) % 2;
+            if (blinkRate === 0) return; // Hide on alternating frames
+            
+            ctx.save();
+            ctx.globalAlpha = 0.9;
+            
+            // Draw message
+            ctx.fillStyle = colors.yellow;
+            ctx.font = 'bold 60px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(255, 219, 91, 0.8)';
+            ctx.shadowBlur = 20;
+            ctx.fillText('CHEAT CODE ACTIVATED', canvas.width / 2, canvas.height / 2);
+            
+            ctx.restore();
+        }
 
         document.addEventListener('keydown', (e) => {
             keys[e.key] = true;
+            
+            // Track cheat code (case insensitive)
+            const key = e.key.toLowerCase();
+            if (key.length === 1 && /[a-z]/.test(key)) {
+                cheatCode += key;
+                // Keep only last N characters where N is cheat sequence length
+                if (cheatCode.length > cheatSequence.length) {
+                    cheatCode = cheatCode.slice(-cheatSequence.length);
+                }
+                
+                // Check if cheat code matches
+                if (cheatCode === cheatSequence) {
+                    activateCheatCode();
+                    cheatCode = ''; // Reset after activation
+                }
+            } else {
+                // Reset cheat code on non-letter key
+                cheatCode = '';
+            }
             
             // Pause/unpause with Escape
             if (e.key === 'Escape') {
@@ -458,7 +1670,7 @@
 
         // Player movement
         function handlePlayerMovement() {
-            if (gameState.paused) return; // Don't move when paused
+            if (gameState.paused || gameState.losingLife || gameState.inCountdown || gameState.showingLevelComplete) return; // Don't move when paused, losing life, during countdown, or showing level complete
             
             if ((keys['ArrowLeft'] || keys['a'] || keys['A']) && player.x > 0) {
                 player.x -= player.speed;
@@ -470,7 +1682,7 @@
 
         // Shooting
         function shoot() {
-            if (gameState.gameRunning && !gameState.paused) {
+            if (gameState.gameRunning && !gameState.paused && !gameState.inLevelTransition && !gameState.losingLife && !gameState.inCountdown && !gameState.showingLevelComplete) {
                 bullets.push({
                     x: player.x + player.width / 2 - 3,
                     y: player.y
@@ -489,6 +1701,8 @@
                 pauseOverlay.style.display = 'block';
             } else {
                 pauseOverlay.style.display = 'none';
+                // Reset frame time when unpausing to avoid large time jumps
+                lastFrameTime = Date.now();
             }
         }
 
@@ -497,7 +1711,6 @@
             gameState.gameRunning = false;
             document.getElementById('finalScore').textContent = gameState.score;
             document.getElementById('gameOver').style.display = 'block';
-            startCountdown();
         }
 
         // Restart game
@@ -509,19 +1722,40 @@
             }
             
             gameState.score = 0;
-            gameState.lives = 3;
+            gameState.lives = 1; // Start with 1 life
+            gameState.level = 1; // Reset to level 1
             gameState.gameRunning = true;
             gameState.paused = false; // Reset pause state
+            gameState.inLevelTransition = false; // Reset transition state
+            gameState.losingLife = false; // Reset animation state
+            gameState.lifeLossAnimationTime = 0;
+            gameState.inCountdown = false; // Reset countdown state
+            gameState.countdownNumber = 3;
+            gameState.countdownTimer = 0;
+            gameState.showGo = false;
+            gameState.showingLevelComplete = false; // Reset level complete state
+            gameState.levelCompleteTimer = 0;
+            gameState.showingCheatMessage = false; // Reset cheat message state
+            gameState.cheatMessageTimer = 0;
             bullets = [];
+            fireBombs = []; // Clear fire bombs on restart
             player.x = canvas.width / 2 - 37.5;
+            player.speed = basePlayerSpeed; // Reset player speed
             document.getElementById('score').textContent = 0;
-            document.getElementById('lives').textContent = 3;
+            document.getElementById('lives').textContent = 1;
+            document.getElementById('level').textContent = 1;
             document.getElementById('gameOver').style.display = 'none';
             document.getElementById('gameOverText').textContent = 'Game Over';
             document.getElementById('pauseOverlay').style.display = 'none'; // Hide pause overlay
-            initEnemies();
-            enemySpeed = 2.5;
-            nextDirectionChange = Date.now() + directionChangeInterval;
+            redKubiesKilled = 0; // Reset red kubie kill counter
+            piercingTimeRemaining = 0;
+            piercingTimeActive = 0;
+            piercingBulletsActive = false;
+            bossSpeed = baseSpeedLevel1; // Reset boss speed
+            bossFireBombTimer = 0; // Reset boss fire bomb timer
+            updatePiercingIndicator();
+            lastFrameTime = Date.now(); // Reset frame time
+            initEnemies(true); // Start with transition for first level too
             gameLoop();
         }
 
@@ -530,7 +1764,7 @@
 
         // Track loaded images
         let imagesLoaded = 0;
-        const totalImages = 2;
+        const totalImages = 3 + redKubieImages.length; // Player + enemy + fire bomb + red kubies
         let gameStarted = false;
         
         function checkAllImagesLoaded() {
@@ -538,7 +1772,8 @@
             imagesLoaded++;
             if (imagesLoaded >= totalImages) {
                 gameStarted = true;
-                initEnemies();
+                lastFrameTime = Date.now(); // Initialize frame time
+                initEnemies(true); // Start with transition for first level
                 gameLoop();
             }
         }
@@ -556,9 +1791,29 @@
             checkAllImagesLoaded();
         };
         
+        fireBombImage.onload = checkAllImagesLoaded;
+        fireBombImage.onerror = function() {
+            console.warn('Could not load fire bomb image, using fallback');
+            checkAllImagesLoaded();
+        };
+        
+        // Load red kubie images
+        redKubieImages.forEach((img, index) => {
+            img.onload = checkAllImagesLoaded;
+            img.onerror = function() {
+                console.warn(`Could not load red kubie image ${index}, using fallback`);
+                checkAllImagesLoaded();
+            };
+        });
+        
         // If images are already loaded (cached), start immediately
         if (enemyImage.complete) checkAllImagesLoaded();
         if (playerImage.complete) checkAllImagesLoaded();
+        if (fireBombImage.complete) checkAllImagesLoaded();
+        redKubieImages.forEach(img => {
+            if (img.complete) checkAllImagesLoaded();
+        });
     </script>
 </body>
 </html>
+
