@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-77WTR9HMK3"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-77WTR9HMK3');
+    </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kube Invaders - Space Invaders Game</title>
@@ -14,7 +24,7 @@
         body {
             font-family: 'Arial', sans-serif;
             background: linear-gradient(135deg, #160f31 0%, #252348 100%);
-            color: #ffffff;
+            color: #e8e5ff;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -40,7 +50,7 @@
             justify-content: space-between;
             margin-bottom: 20px;
             font-size: 1.2em;
-            color: #cfc8fd;
+            color: #818cf8;
         }
 
         .score, .lives, .level {
@@ -60,7 +70,7 @@
 
         .controls {
             margin-top: 20px;
-            color: #cfc8fd;
+            color: #818cf8;
             font-size: 0.9em;
         }
 
@@ -87,7 +97,7 @@
 
         .game-over button {
             background: #5130c4;
-            color: #ffffff;
+            color: #e8e5ff;
             border: none;
             padding: 15px 30px;
             font-size: 1.2em;
@@ -98,7 +108,7 @@
         }
 
         .game-over button:hover {
-            background: #cfc8fd;
+            background: #818cf8;
             color: #160f31;
             transform: scale(1.05);
         }
@@ -119,7 +129,7 @@
         }
 
         .pause-overlay h2 {
-            color: #cfc8fd;
+            color: #818cf8;
             margin-bottom: 20px;
             font-size: 2em;
         }
@@ -151,13 +161,13 @@
     <div class="game-over" id="gameOver">
         <h2 id="gameOverText">Game Over</h2>
         <p>Final Score: <span id="finalScore">0</span></p>
-        <p id="countdown" style="font-size: 1.5em; color: #cfc8fd; margin: 20px 0;">Restarting in <span id="countdownNumber">10</span> seconds...</p>
+        <p id="countdown" style="font-size: 1.5em; color: #818cf8; margin: 20px 0;">Restarting in <span id="countdownNumber">10</span> seconds...</p>
         <button onclick="restartGame()">Play Again Now</button>
     </div>
 
     <div class="pause-overlay" id="pauseOverlay">
         <h2>PAUSED</h2>
-        <p style="color: #cfc8fd; font-size: 1.2em;">Press ESC to resume</p>
+        <p style="color: #818cf8; font-size: 1.2em;">Press ESC to resume</p>
     </div>
 
     <script>
@@ -168,11 +178,11 @@
         const colors = {
             primaryPurple: '#5130c4',
             darkPurple: '#160f31',
-            lightPurple: '#cfc8fd',
+            lightPurple: '#818cf8',
             pink: '#f1acfc',
             yellow: '#ffdb5b',
-            green: '#69b353',
-            white: '#ffffff'
+            accent: '#cfc8fd',
+            white: '#e8e5ff'
         };
 
         // Game state
@@ -728,7 +738,7 @@
 
         // Draw bullets
         function drawBullets() {
-            ctx.fillStyle = colors.green;
+            ctx.fillStyle = colors.accent;
             bullets.forEach(bullet => {
                 if (piercingBulletsActive) {
                     // Draw larger bullet when piercing is active
