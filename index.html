@@ -14,6 +14,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kube Invaders - Space Invaders Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -22,27 +25,28 @@
         }
 
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: 'Inter', sans-serif;
             background: linear-gradient(135deg, #160f31 0%, #252348 100%);
             color: #e8e5ff;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            overflow: hidden;
+            overflow: auto;
         }
 
         .game-container {
             text-align: center;
-            padding: 20px;
+            padding: 8px 20px 20px 20px;
             position: relative;
         }
 
         h1 {
             color: #5130c4;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
             text-shadow: 0 0 10px rgba(81, 48, 196, 0.5);
             font-size: 4.5em;
+            font-weight: 700;
         }
 
         .game-info {
@@ -69,7 +73,6 @@
         }
 
         .controls {
-            margin-top: 20px;
             color: #818cf8;
             font-size: 0.9em;
         }
@@ -139,6 +142,39 @@
             text-shadow: 0 0 20px rgba(255, 219, 91, 1), 0 0 40px rgba(255, 219, 91, 0.8), 0 0 60px rgba(255, 219, 91, 0.6);
             transition: all 0.3s;
         }
+
+        .bottom-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        .footer {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #818cf8;
+            font-size: 0.9em;
+        }
+
+        .footer a {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #818cf8;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+
+        .footer a:hover {
+            color: #f1acfc;
+        }
+
+        .footer img {
+            height: 28px;
+            width: auto;
+        }
     </style>
 </head>
 <body>
@@ -150,8 +186,16 @@
             <div class="lives">Lives: <span id="lives">1</span></div>
         </div>
         <canvas id="gameCanvas" width="1200" height="720"></canvas>
-        <div class="controls">
-            Use ← → arrow keys or A/D to move, SPACE to shoot, ESC to pause/unpause
+        <div class="bottom-bar">
+            <div class="controls">
+                Use ← → arrow keys or A/D to move, SPACE to shoot, ESC to pause/unpause
+            </div>
+            <div class="footer">
+                Brought to you by
+                <a href="https://testkube.io" target="_blank" rel="noopener noreferrer">
+                    <img src="https://cdn.prod.website-files.com/61e00b3936e571a4ea7a5a4c/667962012608a890b5960ecb_tk-logo.svg" alt="Testkube logo" onerror="this.style.display='none'"/>
+                </a>
+            </div>
         </div>
         <div id="piercingIndicator" style="visibility: hidden; margin-top: 10px; font-size: 1.5em; font-weight: bold; min-height: 1.5em;">
             <span id="piercingMessage">Piercing bullets active for</span> <span id="piercingTime">0</span> <span id="piercingUnit">seconds</span>

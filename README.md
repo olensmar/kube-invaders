@@ -1,11 +1,12 @@
 # Kube Invaders
 
-A simple space-invaders game inspired by the Testkube.io color palette.
+A simple space-invaders game inspired by the Testkube.io Kubie!
 
 ## Features
 
 - Classic space-invaders gameplay
 - Beautiful color scheme matching Testkube.io
+- Increased difficulty up until the boss-fight at level 15
 - Smooth animations and gameplay
 - Score tracking
 - Win condition when all enemies are destroyed
